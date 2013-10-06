@@ -1,0 +1,213 @@
+<!-- Creator     : groff version 1.20.1 -->
+<!-- CreationDate: Wed Sep 30 15:44:03 2009 -->
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
+"http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<meta name="generator" content="groff -Thtml, see www.gnu.org">
+<meta http-equiv="Content-Type" content="text/html; charset=US-ASCII">
+<meta name="Content-Style" content="text/css">
+<style type="text/css">
+       p       { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       pre     { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       table   { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       h1      { text-align: center }
+</style>
+<title>ABUSE-CLINIC</title>
+
+</head>
+<body>
+
+<h1 align="center">ABUSE-CLINIC</h1>
+
+<a href="#NAME">NAME</a><br>
+<a href="#SYNOPSIS">SYNOPSIS</a><br>
+<a href="#DESCRIPTION">DESCRIPTION</a><br>
+<a href="#OPTIONS">OPTIONS</a><br>
+<a href="#RUNNING SOME TESTS">RUNNING SOME TESTS</a><br>
+<a href="#SEE ALSO">SEE ALSO</a><br>
+<a href="#AUTHOR">AUTHOR</a><br>
+
+<hr>
+
+
+<h2>NAME
+<a name="NAME"></a>
+</h2>
+
+
+<p style="margin-left:11%; margin-top: 1em">abuse-clinic
+&minus; automatic test discovery and reporting for Python
+3.x</p>
+
+<h2>SYNOPSIS
+<a name="SYNOPSIS"></a>
+</h2>
+
+
+<table width="100%" border="0" rules="none" frame="void"
+       cellspacing="0" cellpadding="0">
+<tr valign="top" align="left">
+<td width="11%"></td>
+<td width="18%">
+
+
+<p style="margin-top: 1em"><b>abuse-clinic</b></p></td>
+<td width="2%"></td>
+<td width="69%">
+
+
+<p style="margin-top: 1em">[<b>&minus;dtSf</b>]
+[<b>&minus;P&nbsp;</b><i>module-prefix</i>]
+[<b>&minus;p&nbsp;</b><i>test-prefix</i>]
+[<b>&minus;e&nbsp;</b><i>pattern</i>]
+[<b>&minus;i&nbsp;</b><i>pattern</i>]
+[<b>&minus;E&nbsp;</b><i>pattern</i>]
+[<b>&minus;I&nbsp;</b><i>pattern</i>] <i>test-directory
+...</i></p> </td></tr>
+</table>
+
+<h2>DESCRIPTION
+<a name="DESCRIPTION"></a>
+</h2>
+
+
+
+<p style="margin-left:11%; margin-top: 1em"><i><b>abuse-clinic</b></i>
+recursively scans each specified <i>test-directory</i> for
+python files named <b>test_xxx.py,</b> loads them, and scans
+their namespace for functions named <b>test_xxx.</b> It then
+runs each such test function, recording a success if the
+test returns without raising an exception and recording a
+failure otherwise. It then writes a report of the results to
+standard output.</p>
+
+<h2>OPTIONS
+<a name="OPTIONS"></a>
+</h2>
+
+
+<p style="margin-left:11%; margin-top: 1em"><b>-d
+--dry-run</b></p>
+
+<p style="margin-left:22%;">This option causes
+<b>abuse-clinic</b> to automatically record every test as a
+success, without actually running any.</p>
+
+<p style="margin-left:11%;"><b>-S --abuse</b></p>
+
+<p style="margin-left:22%;">This option produces a line
+from the Monty Python &rsquo;&rsquo;abuse
+clinic&rsquo;&rsquo; segment.</p>
+
+<p style="margin-left:11%;"><b>-t --trace</b></p>
+
+<p style="margin-left:22%;">This option produces a full
+stack trace for each error report, instead of just a
+description of the exception.</p>
+
+<p style="margin-left:11%;"><b>-f --follow-symlinks</b></p>
+
+<p style="margin-left:22%;">By default, <b>abuse-clinic</b>
+will not follow symlinks in the directory tree. This enables
+following of symlinks. <b>Warning:</b> If you have circular
+symlinks in your repository, this option may cause
+<b>abuse-clinic</b> to enter an infinite loop.</p>
+
+<p style="margin-left:11%;"><b>-P</b> PREFIX
+<b>--module-prefix</b>=PREFIX <b><br>
+-p</b> PREFIX <b>--test-prefix</b>=PREFIX</p>
+
+<p style="margin-left:22%;">By default, <b>abuse-clinic</b>
+treats modules whose names begin with <b>test_</b> as test
+modules. For instance, a module with the name
+<b>foobar.py</b> would be ignored, but one named
+<b>test_foobar.py</b> would be loaded. Upon loading a test
+module, it uses the same test to separate tests from other
+objects in the namespace. A test is a function whose name
+begins with <b>test_</b>. These options exist to allow you
+to change the prefix used to find modules and test
+functions. For example,</p>
+
+
+<p style="margin-left:22%; margin-top: 1em"><b>abuse-clinic
+-p assay_ my_tests/</b></p>
+
+<p style="margin-left:22%; margin-top: 1em">would change
+the prefix for test functions (but not modules) from
+<b>test_</b> to <b>assay_</b>.</p>
+
+<h2>RUNNING SOME TESTS
+<a name="RUNNING SOME TESTS"></a>
+</h2>
+
+
+<p style="margin-left:11%; margin-top: 1em">You may find
+yourself wanting to exclude some tests in your suite from a
+run, because they take too much time or they are known to be
+bad and are cluttering the output, for instance.
+<b>abuse-clinic</b> provides this functionality by allowing
+you to define regular expressions that match against the
+non-prefix portion of module and test names using the
+following options: <b><br>
+-e</b> PATTERN <b>--exclude</b>=PATTERN</p>
+
+<p style="margin-left:22%;">This option takes a regular
+expression describing the names of test functions you wish
+to <i>exclude</i>. Any tests whose names match the
+expression will be skipped.</p>
+
+<p style="margin-left:11%;"><b>-i</b> PATTERN
+<b>--include</b>=PATTERN</p>
+
+<p style="margin-left:22%;">If this option is present, then
+<i>only</i> those tests matching the supplied regular
+expression will be run. Any test whose name does not match
+the expression will not be run.</p>
+
+<p style="margin-left:11%;"><b>-E</b> PATTERN
+<b>--module-exclude</b>=PATTERN <b><br>
+-I</b> PATTERN <b>--module-include</b>=PATTERN</p>
+
+<p style="margin-left:22%;">These options operate as above,
+except on module rather than test names. Specifically, if a
+name matches a <b>-E</b> expression, then it and all the
+tests in it will be skipped. If the name matches a <b>-I</b>
+expression, the tests therein will still be checked against
+any <b>-i</b> or <b>-e</b> patterns.</p>
+
+<p style="margin-left:11%; margin-top: 1em">In each case,
+the regular expression provided must be in the Python
+syntax, as matched by the <b>re</b> module provided with
+python 3.x. It should also be emphasized that the prefix
+portion of the name of the function or module is ignored
+when making the match. For instance, if you type:</p>
+
+
+<p style="margin-left:11%; margin-top: 1em"><b>abuse-clinic
+-e ^blah$ my_tests/</b></p>
+
+<p style="margin-left:11%; margin-top: 1em">and you have a
+test named <b>test_blah</b>, it will not be run.</p>
+
+<h2>SEE ALSO
+<a name="SEE ALSO"></a>
+</h2>
+
+
+<p style="margin-left:11%; margin-top: 1em">The
+documentation on the
+<a href="http://docs.python.org/library/re.html">on
+<b>re</b> module and Python regular expressions.</a></p>
+
+<h2>AUTHOR
+<a name="AUTHOR"></a>
+</h2>
+
+
+
+<p style="margin-left:11%; margin-top: 1em"><a href="jordanb@hafdconsulting.com">Jordan
+Bettis</a></p>
+<hr>
+</body>
+</html>

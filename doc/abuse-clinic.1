@@ -1,0 +1,129 @@
+.\"
+.TH ABUSE-CLINIC 1 "SEPTEMBER 2009" Python "User Manuals"
+.SH NAME
+abuse-clinic \- automatic test discovery and reporting for Python 3.x
+.SH SYNOPSIS
+.SY abuse-clinic
+.OP \-dtSf
+.OP \-P module-prefix
+.OP \-p test-prefix
+.OP \-e pattern
+.OP \-i pattern
+.OP \-E pattern
+.OP \-I pattern
+.IR test-directory
+.IR .\|.\|.
+.YS
+.SH DESCRIPTION
+.BR abuse-clinic " recursively scans each specified"
+.I test-directory
+for python files named
+.B test_xxx.py,
+loads them, and scans their namespace for functions named
+.B test_xxx.
+It then runs each such test function, recording a success if the test returns
+without raising an exception and recording a failure otherwise. It
+then writes a report of the results to standard output.
+.SH OPTIONS
+.TP
+.B "-d --dry-run"
+This option causes
+.BR abuse-clinic " to automatically record every test as a success,"
+without actually running any.
+.
+.TP
+.B "-S --abuse"
+This option produces a line from the Monty Python ``abuse clinic''
+segment.
+.
+.TP
+.B "-t --trace"
+This option produces a full stack trace for each error report, instead
+of just a description of the exception.
+.
+.TP
+.B "-f --follow-symlinks"
+By default,
+.BR abuse-clinic " will not follow symlinks in the directory"
+tree. This enables following of symlinks.
+.BR Warning: " If you have circular symlinks in your repository, this"
+option may cause
+.BR abuse-clinic " to enter an infinite loop."
+.TP
+.BR "-P " PREFIX " --module-prefix"=PREFIX
+.TQ
+.BR "-p " PREFIX " --test-prefix"=PREFIX
+By default,
+.BR abuse-clinic " treats modules whose names begin with"
+.BR test_ " as test modules."
+For instance, a module with the name
+.BR foobar.py " would be ignored, but one named " test_foobar.py
+would be loaded. Upon loading a test module, it uses the same test
+to separate tests from other objects in the namespace. A test is a
+function whose name begins with
+.BR "test_" ". These options exist to allow you to change the prefix"
+used to find modules and test functions. For example,
+
+.EX
+.B abuse-clinic -p assay_ my_tests/
+.EE
+
+would change the prefix for test functions (but not modules)
+from
+.BR "test_ " to " assay_" .
+.
+.SH RUNNING SOME TESTS
+You may find yourself wanting to exclude some tests in your suite from
+a run, because they take too much time or they are known to be bad and
+are cluttering the output, for instance.
+.BR abuse-clinic " provides this functionality by allowing you to"
+define regular expressions that match against the non-prefix portion
+of module and test names using the following options:
+.TP
+.BR "-e " PATTERN " --exclude"=PATTERN
+This option takes a regular expression describing the names of test
+functions you wish to
+.IR exclude ". Any tests whose names match the expression will be skipped."
+.
+.TP
+.BR "-i " PATTERN "  --include"=PATTERN
+If this option is present, then
+.IR only " those tests matching the supplied regular expression will"
+be run. Any test whose name does not match the expression will not be
+run.
+.
+.TP
+.BR "-E " PATTERN " --module-exclude"=PATTERN
+.TQ
+.BR "-I " PATTERN " --module-include"=PATTERN
+These options operate as above, except on module rather than test
+names. Specifically, if a name matches a
+.BR "-E " "expression, then it and all the tests in it will be skipped."
+If the name matches a
+.BR "-I " "expression, the tests therein will still be checked against"
+any
+.BR "-i " or " -e " patterns.
+.P
+In each case, the regular expression provided must be in the Python
+syntax, as matched by the
+.BR re " module provided with python 3.x."
+It should also be emphasized that the prefix portion of the name of
+the function or module is ignored when making the match. For instance,
+if you type:
+
+.EX
+.B abuse-clinic -e ^blah$ my_tests/
+.EE
+
+and you have a test named
+.BR test_blah ", it will not be run."
+
+.SH SEE ALSO
+The documentation on the
+.UR http://\:docs.python.org/\:library/\:re.html
+.BR re " module and Python regular expressions."
+.UE
+.SH AUTHOR
+.MT jordanb@\:hafdconsulting.com
+Jordan Bettis
+.UE

@@ -1,0 +1,35 @@
+Time-stamp: <2009-09-24 16:31:07 jordanb>
+
+Abuse Clinic is a unit test auto-discovery and reporting tool for
+Python 3. It is designed to have no dependencies except python itself,
+and no API footprint on your tests. It performs fully automatic
+discovery and requires no registration boiler plate.
+
+For Abuse Clinic, a test is a function whose name starts with 'test_',
+in a module whose name starts with 'test_', It scans your test suite
+and tries to run each such test it finds, and considers the run a
+success if the test returns without raising an exception. Of course
+the 'test_' prefix for both module and function names is configrable.
+
+After running all the tests, Abuse Clinic produces a report. Depending
+on the verbosity options selected, this can be a listing of each test
+run, or just a report on failed tests. For each failed test, it
+prints the location, source line, and nature of the exception that was
+raised. It can also optionally display stack traces.
+
+It can also sequester output to stdout and include it in test failure
+reports, allowing you to put debugging print statements in your tests.
+
+The impetus for writing Abuse Clinic was to get something like the
+core functionality of py.test in Python 3. But I also wanted to focus
+on providing a very lightweight no-API tool that can easily be stuck
+anwhere and ran on a project's test suite.
+
+Accordingly, Abuse Clinic doesn't provide (or prescribe) any framework
+for making mock objects. You can set those up yourself, of course, or
+use some other library for that, but it's beyond the scope of this
+tool.
+
+The name is inspired by a segment of Monty Python's "Argument Clinic"
+sketch. To avoid any chance of false advertisement, I've made it
+capable of hurling abuse at you.

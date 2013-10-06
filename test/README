@@ -1,0 +1,10 @@
+
+tests/
+
+  This directory contains the test modules for abuse-clinic.
+
+mock_tests/
+
+  This directory contains a set of mock tests used by the tests above
+  to probe abuse-clinic's behavior.
+

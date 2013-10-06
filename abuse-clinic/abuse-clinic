@@ -1,0 +1,909 @@
+#!/usr/bin/python3
+"""
+This is a simple, stand-alone test runner program for Python 3,
+designed to be simple to use and to provide the capability
+auto-discover and run your tests.
+"""
+__version__ = "0.8"
+
+__copyright__ = """
+ Copyright (c) 2009 Jordan Bettis <jordanb@hafdconsulting.com>
+ All rights reserved.
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions
+ are met:
+ 1. Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+ 2. Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+ 3. The name of the author may not be used to endorse or promote products
+    derived from this software without specific prior written permission.
+
+ THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
+
+import sys
+import io
+import inspect
+import traceback
+import random
+import subprocess
+import imp
+import os
+import re
+
+from optparse import OptionValueError, OptionParser, Option, OptionGroup
+
+########################
+##                    ##
+##  Test              ##
+##                    ##
+########################
+
+
+class Test(object):
+    def __init__(self, name, function, options):
+        self.name = name
+        self.options = options
+        self.function = function
+        self.exception = None
+        self.trace = None
+        self.has_run = False
+        self.stdout = None
+
+    def __lt__(self, other):
+        """ Sort by line number so reporting will be in file-order """
+        return self.function.__code__.co_firstlineno < \
+            other.function.__code__.co_firstlineno
+
+    def __cmp__(self, other):
+        """ Sort by line number so that reporting will be in file-order """
+        self_lno = self.function.__code__.co_firstlineno
+        other_lno = other.function.__code__.co_otherlineno
+
+        if self_lno < other_lno:
+            return -1
+        elif self_lno == other_lno:
+            return 0
+        elif self_lno > other_lno:
+            return 1
+
+    def run(self):
+        """
+        This runs the test, returning True if the test succeeded or
+        False if it failed.
+        """
+        if self.has_run:
+            if exception is not None:
+                return True
+            else:
+                return False
+
+        real_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+
+        try:
+            if not self.options.dry_run:
+                self.function()
+            success = True
+        except Exception as problem:
+            self.exception = problem
+            self.trace = self.exception.__traceback__.tb_next
+            success = False
+        finally:
+            self.stdout = sys.stdout.getvalue()
+            sys.stdout = real_stdout
+
+        return success
+
+    def _get_short_name(self):
+        """
+        Return a string containing the test name with the function
+        prefix removed.
+        """
+        return self.name[len(self.options.test_prefix):]
+
+    short_name = property(_get_short_name)
+
+    def _get_line_number(self):
+        """ Return the source file line number of the test function """
+        return self.function.__code__.co_firstlineno
+
+    line_number = property(_get_line_number)
+
+
+########################
+##                    ##
+##  TestModule        ##
+##                    ##
+########################
+
+
+class TestModule(object):
+    """
+    This represents a module we found whose name has the proper prefix.
+    """
+    def __init__(self, name, path, options):
+        """
+        First we check to see if we should skip the module, if so, we
+        set self.skipped to be "white" or "black" depending on what
+        filter got tripped, and we return.
+
+        Otherwise we set it to "False" attempt to load the module,
+        checking to make sure nothing goes wrong. If it does, we set
+        self.failed to true, and we also populate self.exception.
+        """
+        self.name = name
+        self.options = options
+        self.short_name = name[len(options.module_prefix):]
+        self.skipped_filter = self._should_skip()
+
+        if self.skipped_filter is not None:
+            real_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+
+            try:
+                self._load_module(name, path)
+                self.failed = False
+            except Exception as problem:
+                self.failed = True
+                self.exception = problem
+                self.trace = problem.__traceback__.tb_next.tb_next
+            finally:
+                self.stdout = sys.stdout.getvalue()
+                sys.stdout = real_stdout
+
+    def __lt__(self, other):
+        """
+        Sort by the full path so the modules in subdirectories are
+        grouped together.
+        """
+        return self.full_path < other.full_path
+
+    def _load_module(self, name, path):
+        """ This loads the module and populates self.tests """
+        self.module_spec = imp.find_module(name, [path])
+        self.path_name = self.module_spec[1]
+
+        # While loading the module containing the test, we want to
+        # temporarly add the directory that the test module is in to
+        # the system path, so that it can pretend that '' exists in
+        # the path and its own directory is the pwd.
+        original_path = sys.path
+        sys.path = [path]
+        sys.path.extend(original_path)
+
+        self.module = imp.load_module(name, *self.module_spec)
+
+        sys.path = original_path
+
+        self.full_path = self.module.__file__
+
+        self.tests = self.get_tests(self.module)
+
+    def _should_skip(self):
+        """
+        This is used by __init__ to determine if this module should be
+        skipped due to the user providing a -I or -E flag.
+        """
+        white_filter = self.options.module_include
+        black_filter = self.options.module_exclude
+
+        if white_filter is not None \
+                and not white_filter.match(self.short_name):
+
+            return "white"
+
+        elif black_filter is not None \
+                and black_filter.match(self.short_name):
+
+            return "black"
+
+        else:
+            return False
+
+    def get_tests(self, module):
+        """
+        This function iterates through all the objects in the module
+        and returns a dictionary containing just the test functions.
+        """
+        tests = list()
+        function_prefix = self.options.test_prefix
+
+        for name, item in module.__dict__.items():
+            if name[:len(function_prefix)] == function_prefix \
+                    and hasattr(item, '__call__'):
+                tests.append(Test(
+                        name=name, function=item, options=self.options))
+
+        tests.sort()
+        return tests
+
+    def run_all(self, result):
+        """
+        This runs all the tests in the module returning a Result
+        object describing how it went.
+
+        The two filters should be compiled regex objects, or None. If
+        white_filter is not None, only those functions whose names
+        match (sans-prefix) are run. If black_filter is not None, only
+        those which do *not* match are run.
+        """
+        white_filter = self.options.include
+        black_filter = self.options.exclude
+        for test in self.tests:
+            if white_filter is not None \
+                    and not white_filter.match(test.short_name):
+
+                result.add_test_skipped(self, test, 'white')
+
+            elif black_filter is not None \
+                    and black_filter.match(test.short_name):
+
+                result.add_test_skipped(self, test, 'black')
+
+            else:
+
+                if test.run():
+                    result.add_succeeded(self, test)
+                else:
+                    result.add_failed(self, test)
+
+        return result
+
+
+########################
+##                    ##
+##  Result            ##
+##                    ##
+########################
+
+
+class Result(object):
+    """
+    This object keeps track of and reports the result of our test run.
+    """
+    def __init__(self, options):
+        """
+        Each of the dictionaries has as keys a path name of a
+        module. The value is a list containing the tests in the given
+        category for that module.
+        """
+        self.options = options
+
+        self.modules = list()
+        self.modules_skipped = list()
+        self.modules_failed = list()
+
+        self.tests_skipped = list()
+        self.tests_failed = list()
+        self.tests_succeeded = list()
+
+    def add_test_skipped(self, module, test, filter_type):
+        """ Add a test to the list of those that were not run. """
+        self._ensure_has_module(module)
+
+        self.tests_skipped.append((module, test, filter_type),)
+
+    def add_succeeded(self, module, test):
+        """ Add a test to the list of those that succeeded. """
+        self._ensure_has_module(module)
+
+        self.tests_succeeded.append((module, test,))
+
+    def add_failed(self, module, test):
+        """ Add a test to the list of those that failed. """
+        self._ensure_has_module(module)
+
+        self.tests_failed.append((module, test,))
+
+    def add_module_skipped(self, module, filter_type):
+        self.modules_skipped.append((module, filter_type),)
+
+    def add_module_failed(self, module):
+        self.modules_failed.append(module)
+
+    def _ensure_has_module(self, module):
+        """
+        Ensure that the given module's name is in the given
+        dictionary, and in the list of all modules.
+        """
+        if not module in self.modules:
+            self.modules.append(module)
+
+    def statistics(self):
+        """
+        This returns a list of lines describing which tests were run
+        and a summary of the results. How verbose it is depends on the
+        verbosity setting.
+        """
+        total_run = len(self.tests_succeeded) + len(self.tests_failed)
+        if self.options.verbosity == 0:
+            output = ["{0} tests run. {1} tests failed.".format(
+                    total_run, len(self.tests_failed))]
+        else:
+            output = self.stats_summary()
+
+        if self.options.dry_run:
+            output.append("WARNING: In a dry run, tests always succeed.")
+
+        return output
+
+    def stats_summary(self):
+        """
+        This prints out the summary section for statistics in
+        verbosity levels -v and -vv.
+        """
+        total_run = len(self.tests_succeeded) + len(self.tests_failed)
+        width = min(self.options.width, 60) - 6
+        output = list()
+
+        if self.options.module_include is not None:
+            output.append(
+                pp_two_column(
+                    "Test modules skipped (failed to match -I)",
+                    len([x for x in self.modules_skipped if x[1] == 'white']),
+                    width))
+
+        if self.options.module_exclude is not None:
+            output.append(
+                pp_two_column(
+                    "Test modules skipped (matched -E)",
+                    len([x for x in self.modules_skipped if x[1] == 'black']),
+                    width))
+
+        if len(self.modules_failed) != 0:
+            output.append(
+                pp_two_column("Test module load failures",
+                              len(self.modules_failed),
+                              width))
+
+        output.append(pp_two_column("Tests run", total_run, width))
+
+        if self.options.include is not None:
+            output.append(
+                pp_two_column(
+                    "Tests skipped (failed to match -i)",
+                    len([x for x in self.tests_skipped if x[2] == 'white']),
+                    width))
+
+        if self.options.exclude is not None:
+            output.append(
+                pp_two_column(
+                    "Tests skipped (matched -e)",
+                    len([x for x in self.tests_skipped if x[2] == 'black']),
+                    width))
+
+        output.append(pp_two_column(
+                "Tests succeeded", len(self.tests_succeeded), width))
+        output.append(pp_two_column(
+                "Tests failed", len(self.tests_failed), width))
+        output.append("")
+
+        return output
+
+    def detailed_run_report(self):
+        """
+        This prints out a detailed report of which functions were run,
+        skipped, etc. by module.
+        """
+        ## Since there may be many modules, we'd like to sort them by
+        ## path name before printing them out.
+        self.modules_skipped.sort()
+        white = [x for x in self.modules_skipped if x[1] == 'white']
+        black = [x for x in self.modules_skipped if x[1] == 'black']
+        output = list()
+
+        self.modules.sort()
+
+        if len(white) > 0:
+            output.append("MODULES SKIPPED (failed to match -I):")
+            for module in white:
+                output.append(
+                    "  {0} (from {1})".format(
+                        module[0].name, module[0].full_path))
+            output.append("")
+
+        if len(black) > 0:
+            output.append("MODULES SKIPPED (matched -E):")
+            for module in black:
+                output.append(
+                    "  {0} (from {1})".format(
+                        module[0].name, module[0].full_path))
+            output.append("")
+
+        for module in self.modules:
+            output.append("MODULE: {0} (from {1})".format(
+                    module.name, module.full_path))
+            output.extend(pp_indent(self.module_report(module)))
+            output.append("")
+
+        if len(output) != 0:
+            return output
+        else:
+            return ["No tests found."]
+
+    def module_report(self, module):
+        """ Produce a detailed report for the selected module. """
+        white = list(filter(lambda x: x[0] == module and x[2] == 'white',
+                            self.tests_skipped))
+        black = list(filter(lambda x: x[0] == module and x[2] == 'black',
+                            self.tests_skipped))
+        succeeded = list(filter(lambda x: x[0] == module, self.tests_succeeded))
+        failed = list(filter(lambda x: x[0] == module, self.tests_failed))
+        output = list()
+
+        if len(white) != 0:
+            output.append("TESTS SKIPPED (failed to match -i):")
+            output.extend(self._module_report_details(white))
+
+        if len(black) != 0:
+            output.append("TESTS SKIPPED (matched -e):")
+            output.extend(self._module_report_details(black))
+
+        if len(succeeded) != 0:
+            output.append("TESTS SUCCEEDED")
+            output.extend(self._module_report_details(succeeded))
+
+        if len(failed) != 0:
+            output.append("TESTS FAILED")
+            output.extend(self._module_report_details(failed))
+
+        return output
+
+    def _module_report_details(self, group):
+        """
+        Print a group of tests from a given set. This is used by
+        self.module_report
+        """
+        output = list()
+        for test in group:
+            output.append(pp_indent(
+                    pp_two_column("{0}".format(test[1].name),
+                                  "line {0}".format(test[1].line_number),
+                                  width=min(self.options.width - 10, 50))))
+
+        return output
+
+    def module_failure_report(self):
+        """ Produce a report of each module that failed to load. """
+        output = list()
+
+        for module in self.modules_failed:
+            output.append("MODULE FAILED: **** {0} ****".format(module.name))
+            output.extend(pp_indent(pp_exception(
+                        module.exception, module.trace, self.options.trace), 8))
+            output.append("")
+
+        return output
+
+    def test_failure_report(self):
+        """ Produce a report of each failed test. """
+
+        output = list()
+
+        for test_line in self.tests_failed:
+            module = test_line[0]
+            test = test_line[1]
+            output.append("FAILED: **** {0}.{1} ****".format(
+                    module.name, test.name))
+            output.append(pp_indent('(in "{0}" line {1})'.format(
+                        module.full_path, test.line_number),10))
+
+            output.extend(pp_indent(pp_exception(
+                        test.exception, test.trace, self.options.trace),8))
+            output.append("")
+
+            if len(test.stdout) != 0:
+                output.extend(pp_indent(
+                        ["This test produced the following output:",
+                         "  (each output line begins after '. ')"], 8))
+                output.extend(pp_indent(pp_stdout(test.stdout),8))
+                output.append("")
+
+        return output
+
+    def full_report(self):
+        """
+        This produces a list of lines containing a full user-readable
+        report on the results contained in this object.
+        """
+        output = list()
+
+        if self.options.verbosity == 0:
+            output.extend(self.statistics())
+            output.extend(self.module_failure_report())
+            output.extend(self.test_failure_report())
+            if self.options.abuse:
+                output.append(abuse())
+
+        else:
+
+            width = self.options.width - 4
+
+            if self.options.verbosity >= 2:
+                output.extend([pp_header("TEST RUN DETAILS", width), ""])
+                output.extend(pp_indent(self.detailed_run_report()))
+
+            output.extend([pp_header("STATISTICS", width), ""])
+            output.extend(pp_indent(self.statistics()))
+
+            if len(self.modules_failed) != 0:
+                output.extend([pp_header("MODULE LOAD FAILURES", width), ""])
+                output.extend(pp_indent(self.module_failure_report()))
+
+            if len(self.tests_failed) != 0:
+                output.extend([pp_header("FAILED TESTS", width), ""])
+                output.extend(pp_indent(self.test_failure_report()))
+
+            if self.options.abuse:
+                output.extend([pp_header("YOUR ABUSE", width),
+                               "", ' ' * 2 + abuse(), ""])
+
+        return output
+
+
+########################
+##                    ##
+##  Command Arguments ##
+##                    ##
+########################
+
+
+def regex_action(option, opt_str, value, parser):
+    """
+    This defines an OptionParser action for handling the regex
+    options. We set the dest attribute to be the compiled regular
+    expression, or generate an error if the regex is invalid.
+    """
+    try:
+        regex = re.compile(value)
+    except Exception as problem:
+        raise OptionValueError(
+            "failed to compile '{0}': {1}".format(value, problem.args[0]))
+
+    setattr(parser.values, option.dest, regex)
+
+
+def parse_arguments(arguments):
+    """
+    These are the default options. They may be overridden by
+    command line flags.
+    """
+    parser = OptionParser(
+        usage="%prog [options] TEST_DIRECTORY [...]",
+        version="abuse-clinic " + __version__,
+        description="An automatic test discovery and"
+        " reporting tool for Python 3.x")
+
+    parser.add_option(
+        "-d", "--dry-run", action="store_true", default=False,
+        help="don't actually run tests, just show what would"
+        " happen with the selected options")
+
+    parser.add_option(
+        "-f", "--follow-symlinks", action="store_true", default=False,
+        help="follow symlinks while scanning the directory tree")
+
+    parser.add_option(
+        "-p", "--add-to-path", dest="path", action="append",
+        type="string", metavar="DIRECTORY",
+        help="add DIRECTORY to the python path")
+
+    parser.add_option(
+        "-t", "--trace", action="store_true", default=False,
+        help="output a stack trace for every failed test")
+
+    parser.add_option(
+        "-v", "--verbose", dest="verbosity", action="count", default=0,
+        help="increase the level of verbosity")
+
+    parser.add_option(
+        "-A", "--abuse", action="store_true", default=False,
+        help="include some abuse in the output")
+
+    prefixes = OptionGroup(
+        parser, "Changing Prefixes",
+        "Abuse Clinic finds test modules and functions by checking if their "
+        "names have a particular prefix. By default, this is 'test_' for both "
+        "modules and functions. However, we also provide these options to allow "
+        "you to change them if needed.")
+
+    prefixes.add_option(
+        "-x", "--test-prefix", default="test_",
+        help="the prefix on the name of the test functions")
+
+    prefixes.add_option(
+        "-X", "--module-prefix", default="test_",
+        help="the prefix on the name of the test modules")
+
+    parser.add_option_group(prefixes)
+
+    patterns = OptionGroup(
+        parser, "Skipping Some Tests",
+        "These options allow you to skip tests using pattern matching. "
+        "In each case, PATTERN is a *python* regular expression which "
+        "matches against the name of the module/function without the "
+        "prefix")
+
+    patterns.add_option(
+        "-e", "--exclude", metavar="PATTERN", type="string",
+        action="callback", callback=regex_action,
+        help="exclude tests matching PATTERN")
+
+    patterns.add_option(
+        "-E", "--module-exclude", metavar="PATTERN", type="string",
+        action="callback", callback=regex_action,
+        help="exclude modules matching PATTERN")
+
+    patterns.add_option(
+        "-i", "--include", metavar="PATTERN", type="string",
+        action="callback", callback=regex_action,
+        help="include *only* tests matching PATTERN")
+
+    patterns.add_option(
+        "-I", "--module-include", metavar="PATTERN", type="string",
+        action="callback", callback=regex_action,
+        help="include *only* modules matching PATTERN")
+
+    parser.add_option_group(patterns)
+
+    (options, arguments) = parser.parse_args(args=arguments)
+
+    options.ensure_value("width", min(get_terminal_width(), 80))
+    options.ensure_value("include", None)
+    options.ensure_value("exclude", None)
+    options.ensure_value("module_include", None)
+    options.ensure_value("module_exclude", None)
+    options.ensure_value("path", list())
+
+    if len(arguments) == 0:
+        parser.error("please specify a TEST_DIRECTORY")
+
+    return (options, arguments)
+
+
+########################
+##                    ##
+##  Utility Functions ##
+##                    ##
+########################
+
+
+def pp_two_column(left, right, width, fill_char="."):
+    """
+    This pretty-prints a two-column row, with the heading row against
+    the left margin, the and the value row against the left edge.
+    """
+    # This is how many columns of fill we need. The magic number at
+    # the end is the length of the delimiters we put in between.
+    fill_width = width - len(str(left)) - len(str(right)) - 2
+    # Just break the layout if it's too long
+    if fill_width <= 0:
+        fill = ""
+    else:
+        fill = fill_char * fill_width
+    line = "{left} {fill} {right}".format(left=left, right=right, fill=fill)
+    return line
+
+
+def pp_header(header, width):
+    """
+    This pretty-prints a header by centering it within 'width' and
+    putting some pretty ascii art in the fill.
+    """
+    fill_length = int((width - len(header) - 2) / 2)
+
+    fill_list = list()
+    for column in range(int(fill_length / 2)):
+        fill_list.append("-")
+    fill = "=".join(fill_list)
+
+    # We can lose some columns in the calculations above, so we fix
+    # that by including a little space between the the header and the
+    # right fill.
+    adjustment = "-=" * int(((width - len(header) - (2 * len(fill))) /2))
+
+    line = " {fill} {header} {adjustment}{fill}".format(
+        fill=fill, header=header, adjustment=adjustment)
+
+    return line
+
+
+def pp_indent(lines, columns=2):
+    """
+    This indents all lines in the list 'lines' with 'columns' number
+    of spaces.
+    """
+    if isinstance(lines, str):
+        return " " * columns + lines
+    else:
+        return list(map(lambda x: (" " * columns) + x, lines))
+
+
+def pp_exception(exception, trace, trace_stack):
+    """
+    This formats an exception for printing using the python
+    'traceback' routines.
+
+    'trace' is a python traceback object, some form of
+    exception.__traceback__. We have it passed in explicitly so we can
+    use a ac-manipulated version (ex: test.trace). Trace stack is a
+    boolean. If false we just print the exception, not the traceback.
+    """
+    if trace_stack and trace is not None:
+        lines = traceback.format_exception(
+            exception.__class__, exception, trace)
+    else:
+        # If they don't want a trace, at least print the line in the
+        # test file.
+        lines = list()
+        if trace is not None:
+            first_traceback = traceback.extract_tb(trace, limit=None)[0]
+            if first_traceback[3] is not None:
+                source_line = first_traceback[3]
+            else:
+                source_line = "<source>\n"
+            lines.append("  line {0}: {1}\n".format(
+                    first_traceback[1], source_line))
+
+        lines.extend(traceback.format_exception_only(
+            exception.__class__, exception))
+
+    # Remove the trailing newlines
+    lines = list(map(lambda x: x[:-1], lines))
+
+    output = list()
+    # Split lines with intermedial newlines
+    for line in lines:
+        split_line = line.split("\n")
+        output.extend(split_line)
+
+    return output
+
+def pp_stdout(stdout):
+    """ This splits sequestered stdout into lines and prepends '. ' """
+    stdout_lines = stdout[:-1].split("\n")
+    output = list(map(lambda x: ". " + x, stdout_lines))
+    return output
+
+def abuse():
+    """ Dish out a random line of abuse. """
+    abuse_lines = [
+        "WHAT DO YOU WANT?",
+        "Don't give me that you snotty-faced heap of parrot droppings!",
+        "Shut your festering gob you tit!",
+        "Your type makes me puke!",
+        "You vacuous, toffee-nosed, malodorous pervert!",
+        "Stupid Git."]
+    return random.choice(abuse_lines)
+
+
+def get_terminal_width(default=76):
+    """
+    This tries to get the width (in columns) of the current
+    terminal. If it fails, it returns the specified default.
+    """
+    try:
+        width = int(os.environ['COLUMNS'])
+    except (KeyError, ValueError):
+        width = None
+
+    if width is None:
+        stty_succ, stty_out = subprocess.getstatusoutput("stty size")
+        if stty_succ == 0:
+            size = stty_out.split(' ')
+            if len(size) == 2:
+                width = int(size[1])
+
+    if width is None:
+        return default
+    else:
+        return width
+
+
+def module_list(directories, options):
+    """
+    This returns a list of two-tuples, containing a module name and a
+    path to the parent directory, for each candidate module found.
+
+    We recursivly elaborate any sub-directories we find, but will
+    ignore symlinks unless follow_links is True.
+    """
+    follow = options.follow_symlinks
+    module_prefix = options.module_prefix
+    modules = list()
+
+    for directory in directories:
+        for curr, child_dirs, items in os.walk(directory, followlinks=follow):
+
+            # Prune sub-directories we don't want to touch (.svn,
+            # .git, _darcs, etc)
+            child_dirs = [x for x in child_dirs if \
+                              x[:1] != "." and \
+                              x != "_darcs"]
+
+            for item in items:
+                if item[:len(module_prefix)] == module_prefix \
+                        and item[-3:] == ".py":
+
+                    modules.append((item[:-3], curr),)
+
+    return tuple(modules)
+
+def process_module(module_spec, result, options):
+    """
+    This takes a module spec as produced by module_list, a Result
+    object, and options as returned by parse_arguments.
+
+    It then creates a test_module object for the spec, runs any tests
+    therein, and updates the result object.
+    """
+    module = TestModule(module_spec[0], module_spec[1], options)
+
+    if module.skipped_filter is not False:
+        result.add_module_skipped(module, module.skipped_filter)
+
+    elif module.failed:
+        result.add_module_failed(module)
+
+    else:
+        module.run_all(result)
+
+########################
+##                    ##
+##  Program main      ##
+##                    ##
+########################
+
+
+def main(argv):
+    """
+    Perform an abuse clinic run, by parsing the argument list provided
+    in argv, gathering the tests, and producing the report.
+
+    We return a three-tuple containg an exit_status, which is non-zero
+    if any test or module fails, a string containing all the output
+    that should be produced by the program, and the result object, which
+    we provide to make it easier to test abuse-clinic itself.
+    """
+    options, directories = parse_arguments(argv[1:])
+
+    original_path = sys.path
+    sys.path = list()
+    sys.path.extend(original_path)
+    sys.path.extend(options.path)
+
+    result = Result(options)
+    modules_spec = module_list(directories, options)
+    modules = list()
+
+    for module_spec in modules_spec:
+        process_module(module_spec, result, options)
+
+    output = result.full_report()
+
+    if len(result.modules_failed) == 0 and len(result.tests_failed) == 0:
+        exit_status = 0
+    else:
+        exit_status = -1
+
+    sys.path = original_path
+
+    return (exit_status, "\n".join(output), result)
+
+
+if __name__ == "__main__":
+    EXIT_STATUS, OUTPUT, RESULT = main(sys.argv)
+    print(OUTPUT)
+    sys.exit(EXIT_STATUS)
